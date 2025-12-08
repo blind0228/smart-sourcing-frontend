@@ -66,6 +66,30 @@
   cursor: not-allowed;
 }
 
+.notification {
+  margin-top: 14px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.notification--success {
+  background-color: #e6f4ea;
+  color: #0b6f3b;
+}
+
+.notification--error {
+  background-color: #ffe3e3;
+  color: #a10f0f;
+}
+
+.notification--warning {
+  background-color: #fff4d6;
+  color: #7f6500;
+}
+
 .main-layout-container {
   display: flex;
   gap: 25px;
@@ -192,6 +216,43 @@
   background-color: #11182e;
   color: #ffffff;
   border-bottom: 1px solid #324260;
+}
+
+.formula-panel {
+  margin-top: 16px;
+  padding: 18px 20px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(160deg, rgba(18, 24, 41, 0.95), rgba(9, 13, 26, 0.95));
+}
+
+.formula-panel h4 {
+  margin: 0 0 12px;
+  color: #f5f7ff;
+  font-size: 1.1rem;
+}
+
+.formula-block {
+  margin-bottom: 12px;
+}
+
+.formula-label {
+  margin: 0;
+  font-weight: 600;
+  color: #c5d5ff;
+  font-size: 0.95rem;
+}
+
+.formula-block p {
+  margin: 4px 0;
+  color: #e0e8ff;
+  font-size: 0.9rem;
+}
+
+.formula-subtext {
+  margin: 0;
+  color: #9aa3c1;
+  font-size: 0.8rem;
 }
 
 .detail-placeholder {

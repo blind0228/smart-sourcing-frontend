@@ -1,12 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import './App.css'; 
 
 // ------------------------------------------------------
 // ⚙️ 설정값
 // ------------------------------------------------------
-// 🔥 백엔드 주소: Vite 개발 환경에서 Proxy를 사용하기 위해 빈 문자열로 설정합니다.
-// (배포 시에는 .env 파일 등을 통해 전체 ALB 주소를 넣어줘야 합니다.)
 const API_BASE_URL = ""; 
 
 // ------------------------------------------------------
@@ -18,11 +16,14 @@ const getScoreBadgeStyle = (score) => {
   return 'score-pill score-pill--low';
 };
 
+// 백엔드에서 온 텍스트를 기반으로 아이콘 매핑
 const getCompetitionIcon = (level) => {
   if (!level) return '⚪️';
   const s = level.toLowerCase();
-  if (s.includes('낮')) return '🟢';
-  if (s.includes('높') || s.includes('심함')) return '🔴';
+  if (s.includes('매우 심함')) return '🔴';
+  if (s.includes('높음')) return '🟠';
+  if (s.includes('보통')) return '🟡';
+  if (s.includes('낮음')) return '🟢';
   return '🟡';
 };
 
@@ -31,10 +32,82 @@ const getAttractivenessIcon = (level) => {
   const s = level.toLowerCase();
   if (s.includes('매우 높음')) return '🔥';
   if (s.includes('높음')) return '👍';
-  return '❄️';
+  if (s.includes('보통')) return '✨';
+  if (s.includes('낮음')) return '❄️';
+  return '❔';
 };
 
-const CATEGORY_LIST = ["패션의류", "화장품/미용", "식품"];
+const CATEGORY_LIST = ["전체", "패션의류", "화장품/미용", "식품"];
+
+const formatNumber = (value, decimals = 2) => {
+  return Number.isFinite(value) ? value.toFixed(decimals) : null;
+};
+
+// ------------------------------------------------------
+// ⚠️ 주의: 이 함수들은 재계산 로직과의 충돌을 막기 위해 
+// 백엔드 공식 정의를 표시하는 용도로만 사용됩니다.
+// ------------------------------------------------------
+
+// 1. 경쟁 강도 비율 (표시 목적)
+const calculateCompetitionRatioDisplay = (item) => {
+  const totalListings = Number(item?.totalListings ?? 0);
+  const searchVolume = Number(item?.searchVolumeRatio ?? 0);
+  if (!searchVolume || !totalListings) return null;
+  // 기존의 상품 수 / 검색량 비율을 단순 표시용으로만 유지 (실제 레벨은 백엔드에서 옴)
+  const ratio = totalListings / searchVolume; 
+  return Number.isFinite(ratio) ? ratio : null;
+};
+
+// 2. 가격 요인 (재계산 필요)
+const calculatePriceFactor = (item) => {
+  const avgPrice = Number(item?.averagePrice ?? 0);
+  if (!avgPrice || avgPrice <= 0) return null;
+  return Math.log10(avgPrice);
+};
+
+// 3. 시장 매력도 점수 (재계산 필요)
+const calculateAttractivenessScore = (item) => {
+    // ⚠️ 이 함수는 백엔드 로직에 맞춰 정확히 재정의해야 합니다. 
+    // 여기서는 백엔드가 사용하는 '경쟁 우위 점수'를 계산하여 매력도를 역추적하는 방식입니다.
+
+    const searchVolume = Number(item?.searchVolumeRatio ?? 0);
+    const totalListings = Number(item?.totalListings ?? 0);
+    const priceFactor = calculatePriceFactor(item);
+    
+    if (!searchVolume || !totalListings || totalListings === 0 || priceFactor == null) return null;
+    
+    // 백엔드 로직: competitive_advantage_score = searchVolume / totalListings
+    const competitiveAdvantageScore = searchVolume / totalListings;
+    
+    // 백엔드 로직: attractiveness_score = competitiveAdvantageScore * 100000 * priceFactor
+    const score = competitiveAdvantageScore * 100000 * priceFactor;
+    
+    return Number.isFinite(score) ? score : null;
+};
+
+// 4. 소싱 점수 (재계산 필요)
+const calculateSourcingScoreLocal = (item) => {
+  const searchVolume = Number(item?.searchVolumeRatio ?? 0);
+  const attractivenessScore = calculateAttractivenessScore(item);
+  
+  if (!searchVolume && attractivenessScore == null) return null;
+  
+  // 백엔드 로직: sourcing_score = min(100, (avg_search_ratio * 0.5) + (attractiveness_score * 0.05))
+  const raw = (searchVolume * 0.5) + ((attractivenessScore ?? 0) * 0.05);
+  
+  return Math.min(100, raw);
+};
+
+
+// ------------------------------------------------------
+// 🔥 Notification 컴포넌트
+// ------------------------------------------------------
+const Notification = ({ severity, message }) => (
+    <p className={`notification notification--${severity}`}>
+      {message}
+    </p>
+);
+
 
 // ------------------------------------------------------
 // 🔥 메인 컴포넌트
@@ -43,83 +116,105 @@ function App() {
   const [keyword, setKeyword] = useState('');
   const [dataList, setDataList] = useState([]);
   const [rankingList, setRankingList] = useState([]);
-  const [selectedCategory, setSelectedCategory] = useState(CATEGORY_LIST[0]);
+  const [selectedCategory, setSelectedCategory] = useState("전체");
   const [loading, setLoading] = useState(false);
-  const [selectedAnalysis, setSelectedAnalysis] = useState(null); // 우측 상세 분석을 위한 상태
+  const [selectedAnalysis, setSelectedAnalysis] = useState(null); 
+  const [selectedRankingKeyword, setSelectedRankingKeyword] = useState('');
+  const [notification, setNotification] = useState(null);
+  
+  const showNotification = (severity, message) => {
+    setNotification({ severity, message });
+  };
 
   // -----------------------------
   // 🔥 우측 목록 조회 (market/list)
   // -----------------------------
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
-      // API_BASE_URL은 빈 문자열이므로, 요청은 /api/market/list로 전달됨
       const res = await axios.get(`${API_BASE_URL}/api/market/list`); 
-      setDataList(Array.isArray(res.data) ? res.data : []);
-      // 데이터 로드 후 가장 최근 데이터 선택 (옵션)
-      if (res.data && res.data.length > 0) {
-        setSelectedAnalysis(res.data[0]); 
+      const data = Array.isArray(res.data) ? res.data : [];
+      setDataList(data);
+      if (!selectedAnalysis && data.length > 0) {
+        setSelectedAnalysis(data[0]); 
       }
     } catch (err) {
       console.error("데이터 조회 실패:", err);
-      setDataList([]); 
     }
-  };
+  }, [selectedAnalysis]); 
 
   // -----------------------------
   // 🔥 좌측 랭킹 조회 (market/ranking)
   // -----------------------------
-  const fetchRanking = async () => {
+  const fetchRanking = useCallback(async () => {
     try {
       const res = await axios.get(`${API_BASE_URL}/api/market/ranking`);
       setRankingList(Array.isArray(res.data) ? res.data : []);
     } catch (err) {
       console.error("랭킹 조회 실패:", err);
-      setRankingList([]); 
     }
-  };
+  }, []);
 
   // -----------------------------
   // 🔥 키워드 분석 요청 (market/sourcing/request)
   // -----------------------------
   const handleSearch = async () => {
     if (!keyword.trim()) {
-      alert("키워드를 입력해주세요!");
+      showNotification("warning", "키워드를 입력해주세요!");
       return;
     }
 
     setLoading(true);
     try {
       await axios.post(`${API_BASE_URL}/api/market/sourcing/request?keyword=${keyword}`);
-      alert(`'${keyword}' 분석 요청이 접수되었습니다!`);
+      showNotification("success", `'${keyword}' 분석 요청이 접수되었습니다.`);
       setKeyword('');
-      // 요청 후 목록을 다시 로드하여 새 요청이 반영되도록 함
-      fetchData(); 
+      setTimeout(fetchData, 1000); 
     } catch (err) {
       console.error("요청 실패:", err);
-      alert("SQS 전송 오류! (백엔드 확인 필요)");
+      showNotification("error", "SQS 전송 오류! (백엔드 확인 필요)");
     } finally {
       setLoading(false);
     }
   };
 
   // -----------------------------
-  // 🔥 초기 데이터 로딩
+  // 🔥 초기 데이터 로딩 및 인터벌 설정
   // -----------------------------
   useEffect(() => {
     fetchData();
     fetchRanking();
-  }, []);
+    const intervalId = setInterval(() => {
+      fetchData();
+      fetchRanking();
+    }, 2000); 
+    return () => clearInterval(intervalId);
+  }, [fetchData, fetchRanking]); 
+
+  useEffect(() => {
+    if (!notification) return;
+    const timer = setTimeout(() => setNotification(null), 3200);
+    return () => clearTimeout(timer);
+  }, [notification]);
 
   // -----------------------------
   // 🔥 좌측 카테고리 필터링된 랭킹
   // -----------------------------
-  const filteredRanking = Array.isArray(rankingList) ? rankingList.filter(item => (
-    item.keyword.startsWith(`[${selectedCategory}]`)
-  )) : []; 
+  const filteredRanking = Array.isArray(rankingList) ? rankingList.filter(item => {
+    if (selectedCategory === "전체") return true;
+    return item.keyword.startsWith(`[${selectedCategory}]`);
+  }) : []; 
 
   // ------------------------------------------------------
   // 🔥 랭킹 테이블 렌더링
   // ------------------------------------------------------
+  const normalizeValue = (text) => {
+    return text
+      ?.replace(/\[.*?\]/g, '') 
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .trim();
+  };
+
   const renderRankingTable = (list) => (
     <table className="data-table ranking-table" style={{ width: '100%' }}>
       <thead>
@@ -131,7 +226,7 @@ function App() {
       <tbody>
         {!(Array.isArray(list) && list.length > 0) ? (
           <tr>
-            <td colSpan="2" style={{ textAlign: "center", padding: "20px" }}>
+            <td colSpan="2" className="table-data-empty">
               데이터 없음
             </td>
           </tr>
@@ -141,7 +236,9 @@ function App() {
               key={`${selectedCategory}-${index}-${item.keyword}`}
               className="ranking-row"
               onClick={() => {
-                const analysisItem = dataList.find(d => d.searchKeyword === item.keyword.replace(/\[.*?\]\s*/, ''));
+                const normalized = normalizeValue(item.keyword);
+                setSelectedRankingKeyword(item.keyword);
+                const analysisItem = dataList.find(d => normalizeValue(d.searchKeyword) === normalized);
                 setSelectedAnalysis(analysisItem || null);
               }}
             >
@@ -154,16 +251,81 @@ function App() {
     </table>
   );
 
+  const renderFormulaPanel = (item) => {
+    // ⚠️ 백엔드에서 받은 최종 레벨 및 점수를 신뢰합니다.
+    const competitionRatio = calculateCompetitionRatioDisplay(item); // 단순 비율 계산 (표시용)
+    const priceFactor = calculatePriceFactor(item); // 로그 계산 (표시용)
+    const attractivenessScore = calculateAttractivenessScore(item); // 매력도 점수 역추적
+    const sourcingScore = calculateSourcingScoreLocal(item); // 소싱 점수 역추적
+
+    const competitionRatioDisplay = formatNumber(competitionRatio, 2);
+    const priceFactorDisplay = formatNumber(priceFactor, 2);
+    const attractivenessDisplay = formatNumber(attractivenessScore, 1);
+    const sourcingDisplay = formatNumber(sourcingScore, 1);
+    const searchVolume = Number(item?.searchVolumeRatio ?? 0);
+
+    return (
+      <div className="formula-panel">
+        <h4>지표 계산 공식 (백엔드 로직 기반)</h4>
+        
+        {/* 1. 경쟁 강도 비율 (표시용) */}
+        <div className="formula-block">
+          <p className="formula-label">
+            경쟁 강도 비율 (Competition Ratio) = 총 상품 수 ÷ 월간 검색 지수
+          </p>
+          <p>
+            {item.totalListings?.toLocaleString() ?? 'N/A'} ÷ {item.searchVolumeRatio ?? 'N/A'} = **{competitionRatioDisplay ?? '계산 불가'}** ({item.competitionLevel})
+          </p>
+        </div>
+        
+        {/* 2. 가격 요인 */}
+        <div className="formula-block">
+          <p className="formula-label">
+            가격 요인 (Price Factor) = log₁₀(평균 가격)
+          </p>
+          <p>**{priceFactorDisplay ?? '계산 불가'}**</p>
+        </div>
+        
+        {/* 3. 시장 매력도 점수 */}
+        <div className="formula-block">
+          <p className="formula-label">
+            시장 매력도 점수 = (월간 검색 지수 ÷ 상품 수) * 100000 * 가격 요인
+          </p>
+          <p>
+            {searchVolume} ÷ {item.totalListings?.toLocaleString() ?? '-'} * 100000 * {priceFactorDisplay ?? '-'} = **{attractivenessDisplay ?? '계산 불가'}** ({item.marketAttractiveness})
+          </p>
+        </div>
+        
+        {/* 4. 소싱 점수 */}
+        <div className="formula-block">
+          <p className="formula-label">
+            소싱 점수 = min(100, (월간 검색 지수 × 0.5) + (매력도 점수 × 0.05))
+          </p>
+          <p>
+            {searchVolume} × 0.5 + {attractivenessDisplay ?? '-'} × 0.05 = **{sourcingDisplay ?? '계산 불가'}** (DB 저장 값: {item.sourcingScore})
+          </p>
+        </div>
+      </div>
+    );
+  };
+
   // ------------------------------------------------------
   // 🔥 우측 상세 테이블 렌더링
   // ------------------------------------------------------
   const renderAnalysisDetail = (item) => {
     if (!item) {
-        return <p className="detail-placeholder">좌측 랭킹 목록에서 항목을 선택하거나, 분석 목록을 확인해주세요.</p>;
+        return (
+          <p className="detail-placeholder">
+            {selectedRankingKeyword
+              ? `'${normalizeValue(selectedRankingKeyword)}' 키워드에 대한 분석을 아직 불러오지 못했습니다. 목록에서 동일 키워드를 요청하거나 분석 요청 후 확인해주세요.`
+              : '좌측 랭킹 목록에서 항목을 선택하거나, 분석 목록을 확인해주세요.'
+            }
+          </p>
+        );
     }
     
-    // 이미지를 참고하여 간단한 카드 형태로 상세 정보 표시
     return (
+        <>
         <table className="data-table detail-table" style={{ width: '100%' }}>
             <thead>
                 <tr>
@@ -205,6 +367,8 @@ function App() {
                 </tr>
             </tbody>
         </table>
+        {renderFormulaPanel(item)}
+        </>
     );
   };
 
@@ -217,7 +381,7 @@ function App() {
 
       {/* 검색 입력 */}
       <div className="search-container">
-        <h3>새로운 키워드 분석 요청</h3>
+        <h3 className="search-title">새로운 키워드 분석 요청</h3>
         <input
           type="text"
           placeholder="예: 전기담요, 원터치텐트..."
@@ -232,6 +396,9 @@ function App() {
         >
           {loading ? "전송 중..." : "분석 요청 🚀"}
         </button>
+        {notification && (
+          <Notification severity={notification.severity} message={notification.message} />
+        )}
       </div>
 
       {/* 좌측 랭킹 + 우측 상세 분석 */}
