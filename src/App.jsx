@@ -2,8 +2,8 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import './App.css'; 
 
-// 🔥 백엔드 주소
-const API_BASE_URL = "http://localhost:8080";
+// 🔥 백엔드 주소 (Vite 프록시를 사용하기 위해 빈 문자열로 설정)
+const API_BASE_URL = "";
 
 // ------------------------------------------------------
 // 🔥 UI 스타일 함수
@@ -35,6 +35,7 @@ const getAttractivenessIcon = (level) => {
 // ------------------------------------------------------
 function App() {
   const [keyword, setKeyword] = useState('');
+  // dataList의 초기 상태를 배열로 유지하는 것이 중요합니다.
   const [dataList, setDataList] = useState([]);
   const [rankingList, setRankingList] = useState([]);
 
@@ -55,9 +56,11 @@ function App() {
   const fetchData = async () => {
     try {
       const res = await axios.get(`${API_BASE_URL}/api/market/list`);
-      setDataList(res.data);
+      // 응답 데이터가 배열이 아닐 경우를 대비해 안정성 로직 추가
+      setDataList(Array.isArray(res.data) ? res.data : []);
     } catch (err) {
       console.error("데이터 조회 실패:", err);
+      setDataList([]); // 실패 시 빈 배열로 설정
     }
   };
 
@@ -67,9 +70,11 @@ function App() {
   const fetchRanking = async () => {
     try {
       const res = await axios.get(`${API_BASE_URL}/api/market/ranking`);
-      setRankingList(res.data);
+      // 응답 데이터가 배열이 아닐 경우를 대비해 안정성 로직 추가
+      setRankingList(Array.isArray(res.data) ? res.data : []);
     } catch (err) {
       console.error("랭킹 조회 실패:", err);
+      setRankingList([]); // 실패 시 빈 배열로 설정
     }
   };
 
@@ -90,7 +95,7 @@ function App() {
       fetchData();
     } catch (err) {
       console.error("요청 실패:", err);
-      alert("SQS 전송 오류!");
+      alert("SQS 전송 오류! (백엔드 확인 필요)");
     } finally {
       setLoading(false);
     }
@@ -105,14 +110,13 @@ function App() {
   }, []);
 
   // -----------------------------
-  // 🔥 좌측 카테고리 필터링된 랭킹
+  // 🔥 좌측 카테고리 필터링된 랭킹 (이미 Array.isArray로 안정화됨)
   // -----------------------------
-  const filteredRanking = rankingList.filter(item => {
+  const filteredRanking = Array.isArray(rankingList) ? rankingList.filter(item => {
     if (selectedCategory === "전체") return true;
-
     // item.keyword 형태: "[패션의류] 겨울 패딩"
     return item.keyword.startsWith(`[${selectedCategory}]`);
-  });
+  }) : []; // 배열이 아니면 빈 배열로 처리
 
   // ------------------------------------------------------
   // 🔥 랭킹 테이블 렌더링
@@ -127,7 +131,8 @@ function App() {
         </tr>
       </thead>
       <tbody>
-        {list.length === 0 ? (
+        {/* 리스트가 배열이 아니거나 비어있으면 데이터 없음 출력 */}
+        {!(Array.isArray(list) && list.length > 0) ? (
           <tr>
             <td colSpan="3" style={{ textAlign: "center", padding: "20px" }}>
               데이터 없음
@@ -179,7 +184,8 @@ function App() {
         </tr>
       </thead>
       <tbody>
-        {list.length === 0 ? (
+        {/* 리스트가 배열이 아니거나 비어있으면 데이터 없음 출력 */}
+        {!(Array.isArray(list) && list.length > 0) ? (
           <tr>
             <td colSpan="11" style={{ textAlign: "center", padding: "20px" }}>
               데이터 없음
