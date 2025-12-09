@@ -37,10 +37,33 @@ const getAttractivenessIcon = (level) => {
   return '❔';
 };
 
-const CATEGORY_LIST = ["전체", "패션의류", "화장품/미용", "식품"];
+const CATEGORY_LIST = ["패션의류", "화장품/미용", "식품"];
 
 const formatNumber = (value, decimals = 2) => {
   return Number.isFinite(value) ? value.toFixed(decimals) : null;
+};
+
+const formatDateLabel = (value) => {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleDateString('ko-KR');
+};
+
+const formatTimeLabel = (value) => {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+};
+
+const extractRankingReferenceDate = (item) => {
+  if (!item) return null;
+  const preferredKeys = ['referenceDate', 'standardDate', 'asOf', 'snapshotDate', 'date'];
+  for (const key of preferredKeys) {
+    if (item[key]) return item[key];
+  }
+  return null;
 };
 
 // ------------------------------------------------------
@@ -116,11 +139,13 @@ function App() {
   const [keyword, setKeyword] = useState('');
   const [dataList, setDataList] = useState([]);
   const [rankingList, setRankingList] = useState([]);
-  const [selectedCategory, setSelectedCategory] = useState("전체");
+  const [selectedCategory, setSelectedCategory] = useState(CATEGORY_LIST[0] ?? '');
   const [loading, setLoading] = useState(false);
   const [selectedAnalysis, setSelectedAnalysis] = useState(null); 
   const [selectedRankingKeyword, setSelectedRankingKeyword] = useState('');
   const [notification, setNotification] = useState(null);
+  const [rankingReferenceDate, setRankingReferenceDate] = useState(null);
+  const [rankingLastFetchedAt, setRankingLastFetchedAt] = useState(null);
   
   const showNotification = (severity, message) => {
     setNotification({ severity, message });
@@ -148,7 +173,10 @@ function App() {
   const fetchRanking = useCallback(async () => {
     try {
       const res = await axios.get(`${API_BASE_URL}/api/market/ranking`);
-      setRankingList(Array.isArray(res.data) ? res.data : []);
+      const list = Array.isArray(res.data) ? res.data : [];
+      setRankingList(list);
+      setRankingReferenceDate(extractRankingReferenceDate(list[0]));
+      setRankingLastFetchedAt(new Date().toISOString());
     } catch (err) {
       console.error("랭킹 조회 실패:", err);
     }
@@ -200,7 +228,7 @@ function App() {
   // 🔥 좌측 카테고리 필터링된 랭킹
   // -----------------------------
   const filteredRanking = Array.isArray(rankingList) ? rankingList.filter(item => {
-    if (selectedCategory === "전체") return true;
+    if (!selectedCategory) return true;
     return item.keyword.startsWith(`[${selectedCategory}]`);
   }) : []; 
 
@@ -372,6 +400,9 @@ function App() {
     );
   };
 
+  const rankingDateLabel = formatDateLabel(rankingReferenceDate) ?? formatDateLabel(rankingLastFetchedAt) ?? '알 수 없음';
+  const rankingUpdateTimeLabel = formatTimeLabel(rankingLastFetchedAt) ?? '알 수 없음';
+
   // ------------------------------------------------------
   // 🔥 UI 출력 (CSS 클래스 적용)
   // ------------------------------------------------------
@@ -406,6 +437,9 @@ function App() {
         {/* 좌측: 카테고리 랭킹 */}
         <div className="panel-container left-panel">
           <h3 className="panel-title">🔥 네이버 쇼핑 카테고리 TOP10</h3>
+          <p className="panel-subtitle">
+            카테고리 TOP10 · 기준일: {rankingDateLabel} · 업데이트: {rankingUpdateTimeLabel}
+          </p>
 
           {/* 🔥 카테고리 버튼 */}
           <div className="category-buttons-container">

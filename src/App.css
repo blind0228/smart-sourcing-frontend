@@ -121,6 +121,12 @@
   font-size: 1.3rem;
 }
 
+.panel-subtitle {
+  margin: 0 0 12px;
+  color: #9fb3ff;
+  font-size: 0.95rem;
+}
+
 .category-buttons-container {
   display: flex;
   flex-wrap: wrap;
