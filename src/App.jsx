@@ -242,6 +242,7 @@ function App() {
       .replace(/\s+/g, ' ')
       .trim();
   };
+  
 
   const renderRankingTable = (list) => (
     <table className="data-table ranking-table" style={{ width: '100%' }}>
