@@ -16,7 +16,7 @@ const getScoreBadgeStyle = (score) => {
   return 'score-pill score-pill--low';
 };
 
-// 백엔드에서 온 텍스트를 기반으로 아이콘 매핑
+// 백엔드에서 온 텍스트(예: "매우 심함")를 기반으로 아이콘 매핑
 const getCompetitionIcon = (level) => {
   if (!level) return '⚪️';
   const s = level.toLowerCase();
@@ -24,6 +24,17 @@ const getCompetitionIcon = (level) => {
   if (s.includes('높음')) return '🟠';
   if (s.includes('보통')) return '🟡';
   if (s.includes('낮음')) return '🟢';
+  return '🟡';
+};
+
+// [NEW] 로그 스케일 점수(숫자)에 따른 아이콘 매핑 (공식 패널용)
+const getCompetitionIconByScore = (score) => {
+  if (!score) return '⚪️';
+  // 점수가 낮을수록 좋음 (경쟁이 적음)
+  if (score >= 4.5) return '🔴'; // 매우 나쁨
+  if (score >= 3.5) return '🟠'; // 나쁨
+  if (score >= 2.5) return '🟡'; // 보통
+  if (score < 2.5) return '🟢';  // 좋음
   return '🟡';
 };
 
@@ -67,32 +78,36 @@ const extractRankingReferenceDate = (item) => {
 };
 
 // ------------------------------------------------------
-// ⚠️ 주의: 이 함수들은 재계산 로직과의 충돌을 막기 위해 
-// 백엔드 공식 정의를 표시하는 용도로만 사용됩니다.
+// ⚠️ 지표 계산 로직 (프론트엔드 표시용)
 // ------------------------------------------------------
 
-// 1. 경쟁 강도 비율 (표시 목적)
+// 1. [UPDATE] 경쟁 강도 비율 (Log 스케일 적용)
+// 기존: 상품수 / 검색수 -> 11005 (너무 큼)
+// 변경: Log(상품수) / Log(검색수) -> 3.29 (직관적)
 const calculateCompetitionRatioDisplay = (item) => {
   const totalListings = Number(item?.totalListings ?? 0);
   const searchVolume = Number(item?.searchVolumeRatio ?? 0);
+  
   if (!searchVolume || !totalListings) return null;
-  // 기존의 상품 수 / 검색량 비율을 단순 표시용으로만 유지 (실제 레벨은 백엔드에서 옴)
-  const ratio = totalListings / searchVolume; 
+
+  // Log10 적용
+  const logListings = Math.log10(totalListings);
+  // 검색량이 0 또는 1일 경우 분모가 0이 되는 것을 방지 (최소 1.1로 보정)
+  const logSearch = Math.log10(searchVolume > 1 ? searchVolume : 1.1);
+
+  const ratio = logListings / logSearch;
   return Number.isFinite(ratio) ? ratio : null;
 };
 
-// 2. 가격 요인 (재계산 필요)
+// 2. 가격 요인
 const calculatePriceFactor = (item) => {
   const avgPrice = Number(item?.averagePrice ?? 0);
   if (!avgPrice || avgPrice <= 0) return null;
   return Math.log10(avgPrice);
 };
 
-// 3. 시장 매력도 점수 (재계산 필요)
+// 3. 시장 매력도 점수 (역추적)
 const calculateAttractivenessScore = (item) => {
-    // ⚠️ 이 함수는 백엔드 로직에 맞춰 정확히 재정의해야 합니다. 
-    // 여기서는 백엔드가 사용하는 '경쟁 우위 점수'를 계산하여 매력도를 역추적하는 방식입니다.
-
     const searchVolume = Number(item?.searchVolumeRatio ?? 0);
     const totalListings = Number(item?.totalListings ?? 0);
     const priceFactor = calculatePriceFactor(item);
@@ -108,14 +123,13 @@ const calculateAttractivenessScore = (item) => {
     return Number.isFinite(score) ? score : null;
 };
 
-// 4. 소싱 점수 (재계산 필요)
+// 4. 소싱 점수 (역추적)
 const calculateSourcingScoreLocal = (item) => {
   const searchVolume = Number(item?.searchVolumeRatio ?? 0);
   const attractivenessScore = calculateAttractivenessScore(item);
   
   if (!searchVolume && attractivenessScore == null) return null;
   
-  // 백엔드 로직: sourcing_score = min(100, (avg_search_ratio * 0.5) + (attractiveness_score * 0.05))
   const raw = (searchVolume * 0.5) + ((attractivenessScore ?? 0) * 0.05);
   
   return Math.min(100, raw);
@@ -281,29 +295,40 @@ function App() {
   );
 
   const renderFormulaPanel = (item) => {
-    // ⚠️ 백엔드에서 받은 최종 레벨 및 점수를 신뢰합니다.
-    const competitionRatio = calculateCompetitionRatioDisplay(item); // 단순 비율 계산 (표시용)
-    const priceFactor = calculatePriceFactor(item); // 로그 계산 (표시용)
-    const attractivenessScore = calculateAttractivenessScore(item); // 매력도 점수 역추적
-    const sourcingScore = calculateSourcingScoreLocal(item); // 소싱 점수 역추적
+    // 1. 수정된 Log 스케일 적용 경쟁 강도
+    const competitionScore = calculateCompetitionRatioDisplay(item);
+    const competitionDisplay = formatNumber(competitionScore, 2);
 
-    const competitionRatioDisplay = formatNumber(competitionRatio, 2);
+    const priceFactor = calculatePriceFactor(item);
+    const attractivenessScore = calculateAttractivenessScore(item);
+    const sourcingScore = calculateSourcingScoreLocal(item);
+
     const priceFactorDisplay = formatNumber(priceFactor, 2);
     const attractivenessDisplay = formatNumber(attractivenessScore, 1);
     const sourcingDisplay = formatNumber(sourcingScore, 1);
     const searchVolume = Number(item?.searchVolumeRatio ?? 0);
+    const totalListings = Number(item?.totalListings ?? 0);
 
     return (
       <div className="formula-panel">
-        <h4>지표 계산 공식 (백엔드 로직 기반)</h4>
+        <h4>지표 계산 공식 (로그 스케일 보정 적용)</h4>
         
-        {/* 1. 경쟁 강도 비율 (표시용) */}
+        {/* 1. 경쟁 강도 비율 (Log 적용) */}
         <div className="formula-block">
           <p className="formula-label">
-            경쟁 강도 비율 (Competition Ratio) = 총 상품 수 ÷ 월간 검색 지수
+            경쟁 강도 (Log Ratio) = log₁₀(상품 수) ÷ log₁₀(월간 검색 지수)
           </p>
           <p>
-            {item.totalListings?.toLocaleString() ?? 'N/A'} ÷ {item.searchVolumeRatio ?? 'N/A'} = **{competitionRatioDisplay ?? '계산 불가'}** ({item.competitionLevel})
+             {/* Log 계산 과정 시각화 */}
+             log({totalListings.toLocaleString()}) ÷ log({searchVolume}) 
+             <br/>
+             = {formatNumber(Math.log10(totalListings))} ÷ {formatNumber(Math.log10(searchVolume > 1 ? searchVolume : 1.1))}
+             <br/>
+             = <strong>{competitionDisplay ?? '계산 불가'}</strong> 
+             &nbsp;({getCompetitionIconByScore(competitionScore)})
+          </p>
+          <p className="sub-text" style={{fontSize:'0.85em', color:'#666', marginTop:'4px'}}>
+            * 수치가 낮을수록 경쟁이 적어 좋습니다. (3.0 이하 권장)
           </p>
         </div>
         
@@ -321,7 +346,7 @@ function App() {
             시장 매력도 점수 = (월간 검색 지수 ÷ 상품 수) * 100000 * 가격 요인
           </p>
           <p>
-            {searchVolume} ÷ {item.totalListings?.toLocaleString() ?? '-'} * 100000 * {priceFactorDisplay ?? '-'} = **{attractivenessDisplay ?? '계산 불가'}** ({item.marketAttractiveness})
+            {searchVolume} ÷ {totalListings.toLocaleString()} * 100000 * {priceFactorDisplay ?? '-'} = **{attractivenessDisplay ?? '계산 불가'}** ({item.marketAttractiveness})
           </p>
         </div>
         
@@ -376,6 +401,7 @@ function App() {
                 </tr>
                 <tr>
                     <td>경쟁 강도</td>
+                    {/* DB 저장 텍스트 값 표시 + 아이콘 */}
                     <td>{getCompetitionIcon(item.competitionLevel)} {item.competitionLevel}</td>
                 </tr>
                 <tr>
@@ -405,7 +431,7 @@ function App() {
   const rankingUpdateTimeLabel = formatTimeLabel(rankingLastFetchedAt) ?? '알 수 없음';
 
   // ------------------------------------------------------
-  // 🔥 UI 출력 (CSS 클래스 적용)
+  // 🔥 UI 출력
   // ------------------------------------------------------
   return (
     <div className="App">
