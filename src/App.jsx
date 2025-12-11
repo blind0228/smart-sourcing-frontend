@@ -16,7 +16,7 @@ const getScoreBadgeStyle = (score) => {
   return 'score-pill score-pill--low';
 };
 
-// 백엔드에서 온 텍스트(예: "매우 심함")를 기반으로 아이콘 매핑
+// [구버전] 백엔드 텍스트 기반 아이콘 (이제 사용 안 함, 혹시 몰라 남겨둠)
 const getCompetitionIcon = (level) => {
   if (!level) return '⚪️';
   const s = level.toLowerCase();
@@ -27,15 +27,23 @@ const getCompetitionIcon = (level) => {
   return '🟡';
 };
 
-// [NEW] 로그 스케일 점수(숫자)에 따른 아이콘 매핑 (공식 패널용)
+// [NEW] 로그 스케일 점수(숫자)에 따른 아이콘 매핑
 const getCompetitionIconByScore = (score) => {
   if (!score) return '⚪️';
-  // 점수가 낮을수록 좋음 (경쟁이 적음)
   if (score >= 4.5) return '🔴'; // 매우 나쁨
   if (score >= 3.5) return '🟠'; // 나쁨
   if (score >= 2.5) return '🟡'; // 보통
   if (score < 2.5) return '🟢';  // 좋음
   return '🟡';
+};
+
+// [NEW] 로그 스케일 점수(숫자)에 따른 텍스트 판별
+const getCompetitionTextByScore = (score) => {
+  if (!score) return '분석 불가';
+  if (score >= 4.5) return '매우 나쁨';
+  if (score >= 3.5) return '나쁨';
+  if (score >= 2.5) return '보통';
+  return '좋음'; 
 };
 
 const getAttractivenessIcon = (level) => {
@@ -82,8 +90,6 @@ const extractRankingReferenceDate = (item) => {
 // ------------------------------------------------------
 
 // 1. [UPDATE] 경쟁 강도 비율 (Log 스케일 적용)
-// 기존: 상품수 / 검색수 -> 11005 (너무 큼)
-// 변경: Log(상품수) / Log(검색수) -> 3.29 (직관적)
 const calculateCompetitionRatioDisplay = (item) => {
   const totalListings = Number(item?.totalListings ?? 0);
   const searchVolume = Number(item?.searchVolumeRatio ?? 0);
@@ -92,7 +98,6 @@ const calculateCompetitionRatioDisplay = (item) => {
 
   // Log10 적용
   const logListings = Math.log10(totalListings);
-  // 검색량이 0 또는 1일 경우 분모가 0이 되는 것을 방지 (최소 1.1로 보정)
   const logSearch = Math.log10(searchVolume > 1 ? searchVolume : 1.1);
 
   const ratio = logListings / logSearch;
@@ -114,10 +119,7 @@ const calculateAttractivenessScore = (item) => {
     
     if (!searchVolume || !totalListings || totalListings === 0 || priceFactor == null) return null;
     
-    // 백엔드 로직: competitive_advantage_score = searchVolume / totalListings
     const competitiveAdvantageScore = searchVolume / totalListings;
-    
-    // 백엔드 로직: attractiveness_score = competitiveAdvantageScore * 100000 * priceFactor
     const score = competitiveAdvantageScore * 100000 * priceFactor;
     
     return Number.isFinite(score) ? score : null;
@@ -150,7 +152,7 @@ const Notification = ({ severity, message }) => (
 // 🔥 메인 컴포넌트
 // ------------------------------------------------------
 function App() {
-  console.log("업데이트 확인: 2025-12-11-(13:32) 버전 로딩됨!");
+  console.log("🔥 업데이트 확인: 상세 테이블 로직 수정됨 (13:58)");
   const [keyword, setKeyword] = useState('');
   const [dataList, setDataList] = useState([]);
   const [rankingList, setRankingList] = useState([]);
@@ -239,17 +241,11 @@ function App() {
     return () => clearTimeout(timer);
   }, [notification]);
 
-  // -----------------------------
-  // 🔥 좌측 카테고리 필터링된 랭킹
-  // -----------------------------
   const filteredRanking = Array.isArray(rankingList) ? rankingList.filter(item => {
     if (!selectedCategory) return true;
     return item.keyword.startsWith(`[${selectedCategory}]`);
   }) : []; 
 
-  // ------------------------------------------------------
-  // 🔥 랭킹 테이블 렌더링
-  // ------------------------------------------------------
   const normalizeValue = (text) => {
     return text
       ?.replace(/\[.*?\]/g, '') 
@@ -258,7 +254,6 @@ function App() {
       .trim();
   };
   
-
   const renderRankingTable = (list) => (
     <table className="data-table ranking-table" style={{ width: '100%' }}>
       <thead>
@@ -296,7 +291,6 @@ function App() {
   );
 
   const renderFormulaPanel = (item) => {
-    // 1. 수정된 Log 스케일 적용 경쟁 강도
     const competitionScore = calculateCompetitionRatioDisplay(item);
     const competitionDisplay = formatNumber(competitionScore, 2);
 
@@ -320,7 +314,6 @@ function App() {
             경쟁 강도 (Log Ratio) = log₁₀(상품 수) ÷ log₁₀(월간 검색 지수)
           </p>
           <p>
-             {/* Log 계산 과정 시각화 */}
              log({totalListings.toLocaleString()}) ÷ log({searchVolume}) 
              <br/>
              = {formatNumber(Math.log10(totalListings))} ÷ {formatNumber(Math.log10(searchVolume > 1 ? searchVolume : 1.1))}
@@ -365,7 +358,7 @@ function App() {
   };
 
   // ------------------------------------------------------
-  // 🔥 우측 상세 테이블 렌더링
+  // 🔥 우측 상세 테이블 렌더링 (여기 수정됨!)
   // ------------------------------------------------------
   const renderAnalysisDetail = (item) => {
     if (!item) {
@@ -378,6 +371,11 @@ function App() {
           </p>
         );
     }
+
+    // 🌟 [수정됨] 경쟁 강도도 DB값 대신 Log 계산값 사용
+    const compScore = calculateCompetitionRatioDisplay(item);
+    const compIcon = getCompetitionIconByScore(compScore);
+    const compText = getCompetitionTextByScore(compScore);
     
     return (
         <>
@@ -400,10 +398,12 @@ function App() {
                     <td>총 상품 수</td>
                     <td>{item.totalListings?.toLocaleString()}</td>
                 </tr>
+                {/* 🌟 수정된 경쟁 강도 표시 (Log 수치 + 텍스트 + 아이콘) */}
                 <tr>
                     <td>경쟁 강도</td>
-                    {/* DB 저장 텍스트 값 표시 + 아이콘 */}
-                    <td>{getCompetitionIcon(item.competitionLevel)} {item.competitionLevel}</td>
+                    <td>
+                      {compIcon} {formatNumber(compScore, 2)} ({compText})
+                    </td>
                 </tr>
                 <tr>
                     <td>매력도</td>
@@ -431,14 +431,10 @@ function App() {
   const rankingDateLabel = formatDateLabel(rankingReferenceDate) ?? formatDateLabel(rankingLastFetchedAt) ?? '알 수 없음';
   const rankingUpdateTimeLabel = formatTimeLabel(rankingLastFetchedAt) ?? '알 수 없음';
 
-  // ------------------------------------------------------
-  // 🔥 UI 출력
-  // ------------------------------------------------------
   return (
     <div className="App">
       <h1>🛒 스마트 소싱 분석 대시보드</h1>
 
-      {/* 검색 입력 */}
       <div className="search-container">
         <h3 className="search-title">새로운 키워드 분석 요청</h3>
         <input
@@ -460,16 +456,12 @@ function App() {
         )}
       </div>
 
-      {/* 좌측 랭킹 + 우측 상세 분석 */}
       <div className="main-layout-container">
-        {/* 좌측: 카테고리 랭킹 */}
         <div className="panel-container left-panel">
           <h3 className="panel-title">🔥 네이버 쇼핑 카테고리 TOP10</h3>
           <p className="panel-subtitle">
             카테고리 TOP10 · 기준일: {rankingDateLabel} · 업데이트: {rankingUpdateTimeLabel}
           </p>
-
-          {/* 🔥 카테고리 버튼 */}
           <div className="category-buttons-container">
             {CATEGORY_LIST.map(cat => (
               <button
@@ -481,12 +473,9 @@ function App() {
               </button>
             ))}
           </div>
-
-          {/* 🔥 선택된 카테고리 랭킹 */}
           {renderRankingTable(filteredRanking)}
         </div>
 
-        {/* 우측: 상세 분석 */}
         <div className="panel-container right-panel">
           <h3 className="panel-title">📊 상세 분석 결과</h3>
           {renderAnalysisDetail(selectedAnalysis)}
