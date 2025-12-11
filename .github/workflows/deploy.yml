@@ -1,4 +1,4 @@
-name: Frontend Deploy to ECS (Lab Ver.)
+name: Frontend Deploy to ECS (Production)
 
 on:
   push:
@@ -8,9 +8,12 @@ on:
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: smartsourcing-frontend-nginx
-  ECS_SERVICE: SmartSourcing-Frontend-Task-Def-service-esu9pdqq
+  ECS_SERVICE: SmartSourcing-Frontend-Task-Def-service-esu9pdqq # ECS 서비스 이름 (사용자 지정)
   ECS_CLUSTER: SmartSourcing-Cluster
-  CONTAINER_NAME: smartsourcing-frontend
+  CONTAINER_NAME: smartsourcing-frontend # Task Definition 내부의 컨테이너 이름
+  
+  # ⭐ 중요: 현재 사용 중인 Task Definition의 기본 이름을 입력하세요 (예: my-frontend-task-def)
+  ECS_TASK_DEFINITION_NAME: SmartSourcing-Frontend-Task-Def-service # Task Def의 이름 부분만 입력
 
 jobs:
   deploy:
@@ -21,6 +24,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        
+      # ⚠️ 새로운 배포 로직을 위해 'jq' 설치는 필수입니다.
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
 
       - name: Set up Node.js 18
         uses: actions/setup-node@v3
@@ -48,28 +55,65 @@ jobs:
         id: build-image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }} # 커밋 SHA를 태그로 사용 (버전 관리 용이)
         run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:latest" >> $GITHUB_OUTPUT
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          # 다음 스텝에서 사용할 전체 이미지 URI를 출력합니다.
+          echo "image_uri=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-      - name: Update ECS Service
+      # ==========================================================
+      # 5. ⭐ 핵심 단계: Task Definition 업데이트 및 ECS 서비스 배포 ⭐
+      # Task Definition을 새 이미지 URI로 업데이트하여 안정적으로 배포합니다.
+      # ==========================================================
+      - name: Deploy to ECS Fargate
+        id: deploy-task
+        env:
+          IMAGE_URI: ${{ steps.build-image.outputs.image_uri }} 
         run: |
-          aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE --force-new-deployment
+          # 1. 현재 Task Definition (TD) JSON을 다운로드 받습니다.
+          aws ecs describe-task-definition \
+            --task-definition ${{ env.ECS_TASK_DEFINITION_NAME }} \
+            --query 'taskDefinition' \
+            --region ${{ env.AWS_REGION }} \
+            > task-definition.json
 
-      # ▼▼▼▼▼▼▼ [여기부터 추가된 부분] 디스코드 알림 ▼▼▼▼▼▼▼
+          # 2. jq를 사용하여 다운로드 받은 JSON 파일에서 새 이미지 URI로 교체하고 불필요한 필드를 제거합니다.
+          cat task-definition.json \
+          | jq --arg IMG_URI "$IMAGE_URI" \
+               --arg CONTAINER_NAME "${{ env.CONTAINER_NAME }}" \
+               '(.containerDefinitions[] | select(.name == $CONTAINER_NAME).image) = $IMG_URI' \
+          | jq 'del(.status, .requiresAttributes, .revision, .compatibilities, .registeredAt, .registeredBy, .deregisteredAt, .runtimePlatform)' \
+          > new-task-definition.json
+          
+          echo "::notice file=new-task-definition.json::새 Task Definition을 등록합니다. 이미지: $IMAGE_URI"
+
+          # 3. 새로운 Task Definition을 AWS에 등록합니다.
+          NEW_TASK_DEF_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://new-task-definition.json \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --region ${{ env.AWS_REGION }} \
+            --output text)
+
+          # 4. ECS 서비스에 새로운 Task Definition으로 업데이트 명령을 내립니다.
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service ${{ env.ECS_SERVICE }} \
+            --task-definition $NEW_TASK_DEF_ARN \
+            --force-new-deployment \
+            --region ${{ env.AWS_REGION }}
+
+      # ▼▼▼▼▼▼▼ [마무리] 디스코드 알림 ▼▼▼▼▼▼▼
       - name: Discord Notification
         uses: sarisia/actions-status-discord@v1
-        if: always() # 성공하든 실패하든 항상 실행
+        if: always()
         with:
           webhook: ${{ secrets.DISCORD_WEBHOOK }}
-          # 알림 메시지 커스터마이징 (원하는 대로 수정 가능)
-          title: "프론트엔드 배포 결과"
+          title: "프론트엔드 배포 결과 - ${{ github.ref_name }}"
           description: |
             **상태:** ${{ job.status }}
             **실행자:** ${{ github.actor }}
             **커밋:** ${{ github.event.head_commit.message }}
-          # 성공하면 초록(success), 실패하면 빨강(failure) 등 자동 색상 지정
+            **Task Def ARN:** ${{ steps.deploy-task.outputs.NEW_TASK_DEF_ARN }} 
           color: ${{ job.status == 'success' && '0x28a745' || '0xdc3545' }}
           username: GitHub Actions Bot
-          #
