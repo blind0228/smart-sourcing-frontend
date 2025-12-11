@@ -88,7 +88,7 @@ jobs:
           | jq --arg IMG_URI "$IMAGE_URI" \
                --arg CONTAINER_NAME "${{ env.CONTAINER_NAME }}" \
                '(.containerDefinitions[] | select(.name == $CONTAINER_NAME).image) = $IMG_URI' \
-          | jq 'del(.status, .requiresAttributes, .revision, .compatibilities, .registeredAt, .registeredBy, .deregisteredAt, .runtimePlatform)' \
+          | jq 'del(.status, .requiresAttributes, .revision, .compatibilities, .registeredAt, .registeredBy, .deregisteredAt, .runtimePlatform, .taskDefinitionArn, .requiresAttributes)' \
           > new-task-definition.json
           
           echo "::notice file=new-task-definition.json::새 Task Definition을 등록합니다. 이미지: $IMAGE_URI"
