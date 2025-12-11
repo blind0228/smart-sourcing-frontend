@@ -150,6 +150,7 @@ const Notification = ({ severity, message }) => (
 // 🔥 메인 컴포넌트
 // ------------------------------------------------------
 function App() {
+  console.log("업데이트 확인: 2025-12-11-(13:32) 버전 로딩됨!");
   const [keyword, setKeyword] = useState('');
   const [dataList, setDataList] = useState([]);
   const [rankingList, setRankingList] = useState([]);
