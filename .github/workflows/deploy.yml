@@ -64,7 +64,7 @@ jobs:
         with:
           webhook: ${{ secrets.DISCORD_WEBHOOK }}
           # 알림 메시지 커스터마이징 (원하는 대로 수정 가능)
-          title: "🚀 프론트엔드 배포 결과"
+          title: "프론트엔드 배포 결과"
           description: |
             **상태:** ${{ job.status }}
             **실행자:** ${{ github.actor }}
