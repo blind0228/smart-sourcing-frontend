@@ -3,15 +3,14 @@ name: Frontend Deploy to ECS (Lab Ver.)
 on:
   push:
     branches:
-      - main  # 프론트엔드 코드가 메인 브랜치에 푸시될 때 실행
+      - main
 
 env:
-  AWS_REGION: us-east-1                      # ⭐ 백엔드와 동일한 리전 사용
-  ECR_REPOSITORY: smartsourcing-frontend-nginx  # ⭐ 주신 정보: ECR 리포지토리 이름
-  ECS_SERVICE: SmartSourcing-Frontend-Task-Def-service-esu9pdqq # ⭐ 주신 정보: ECS 서비스 이름
-  ECS_CLUSTER: SmartSourcing-Cluster         # ⭐ 주신 정보: 클러스터 이름
-  # ⚠️ 주의: 아래 이름은 ECS '태스크 정의'에 설정된 '프론트엔드 컨테이너 이름'과 똑같아야 합니다.
-  CONTAINER_NAME: smartsourcing-frontend     # ⭐ 컨테이너 이름 (태스크 정의 확인 필수)
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: smartsourcing-frontend-nginx
+  ECS_SERVICE: SmartSourcing-Frontend-Task-Def-service-esu9pdqq
+  ECS_CLUSTER: SmartSourcing-Cluster
+  CONTAINER_NAME: smartsourcing-frontend
 
 jobs:
   deploy:
@@ -21,47 +20,55 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      # 1. Node.js 환경 세팅
       - name: Set up Node.js 18
         uses: actions/setup-node@v3
         with:
           node-version: '18'
 
-      # 2. 패키지 설치 및 빌드
       - name: Install dependencies and Build
         run: |
           npm install
           npm run build 
 
-      # 3. AWS 자격 증명 설정 (Secrets 사용)
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v1
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 4. ECR 로그인
       - name: Login to Amazon ECR
         id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v1
+        uses: aws-actions/amazon-ecr-login@v2
 
-      # 5. Docker 이미지 빌드 및 푸시
       - name: Build, tag, and push image to Amazon ECR
         id: build-image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}
         run: |
-          # 프론트엔드 빌드 결과물을 포함하는 이미지를 빌드
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:latest" >> $GITHUB_OUTPUT
 
-      # 6. ECS 서비스 업데이트
       - name: Update ECS Service
         run: |
           aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE --force-new-deployment
+
+      # ▼▼▼▼▼▼▼ [여기부터 추가된 부분] 디스코드 알림 ▼▼▼▼▼▼▼
+      - name: Discord Notification
+        uses: sarisia/actions-status-discord@v1
+        if: always() # 성공하든 실패하든 항상 실행
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK }}
+          # 알림 메시지 커스터마이징 (원하는 대로 수정 가능)
+          title: "🚀 프론트엔드 배포 결과"
+          description: |
+            **상태:** ${{ job.status }}
+            **실행자:** ${{ github.actor }}
+            **커밋:** ${{ github.event.head_commit.message }}
+          # 성공하면 초록(success), 실패하면 빨강(failure) 등 자동 색상 지정
+          color: ${{ job.status == 'success' && '0x28a745' || '0xdc3545' }}
+          username: GitHub Actions Bot
