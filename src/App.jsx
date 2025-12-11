@@ -152,7 +152,7 @@ const Notification = ({ severity, message }) => (
 // 🔥 메인 컴포넌트
 // ------------------------------------------------------
 function App() {
-  console.log("🔥 업데이트 확인: 상세 테이블 로직 수정됨 (13:58)");
+  console.log("🔥 업데이트 확인: 상세 테이블 로직 수정됨 (19:44)");
   const [keyword, setKeyword] = useState('');
   const [dataList, setDataList] = useState([]);
   const [rankingList, setRankingList] = useState([]);
@@ -486,3 +486,4 @@ function App() {
 }
 
 export default App;
+
