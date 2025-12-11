@@ -1,4 +1,4 @@
-name: Frontend Deploy to ECS (Production)
+name: Frontend ECR Push Only (No ECS Deployment)
 
 on:
   push:
@@ -8,16 +8,15 @@ on:
 env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: smartsourcing-frontend-nginx
-  ECS_SERVICE: SmartSourcing-Frontend-Task-Def-service-esu9pdqq # ECS 서비스 이름 (사용자 지정)
+  # 아래 ECS 관련 환경 변수들은 사용되지 않지만, 파일 구조 유지를 위해 남겨둡니다.
+  ECS_SERVICE: SmartSourcing-Frontend-Task-Def-service-esu9pdqq
   ECS_CLUSTER: SmartSourcing-Cluster
-  CONTAINER_NAME: smartsourcing-frontend # Task Definition 내부의 컨테이너 이름
-  
-  # ⭐ 수정 완료: Task Definition의 정확한 이름(리비전 번호 제거)을 입력해야 합니다.
-  ECS_TASK_DEFINITION_NAME: SmartSourcing-Frontend-Task-Def # 'service' 접미사 제거
+  CONTAINER_NAME: smartsourcing-frontend
+  ECS_TASK_DEFINITION_NAME: SmartSourcing-Frontend-Task-Def
 
 jobs:
   deploy:
-    name: Deploy Frontend
+    name: Build and Push ECR
     runs-on: ubuntu-latest
     environment: production
 
@@ -25,7 +24,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         
-      # ⚠️ 새로운 배포 로직을 위해 'jq' 설치는 필수입니다.
+      # jq 설치는 이제 필수는 아니지만, 워크플로우 구조 유지를 위해 남겨둡니다.
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq
 
@@ -44,10 +43,9 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-session-token: ${{ secrets.SESSION_TOKEN }} # AWS_SESSION_TOKEN으로 변경
           aws-region: ${{ env.AWS_REGION }}
 
-      # ⭐ 디버깅을 위해 현재 인증 상태를 확인합니다. (권한 문제 확인용)
       - name: Check AWS Caller Identity
         run: aws sts get-caller-identity
 
@@ -61,64 +59,18 @@ jobs:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }} # 커밋 SHA를 태그로 사용 (버전 관리 용이)
         run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          # 1. 이미지 빌드 (로컬 태그: smartsourcing-frontend-nginx)
+          docker build -t smartsourcing-frontend-nginx .
+          
+          # 2. AWS ECR 레지스트리 경로로 태그 지정
+          docker tag smartsourcing-frontend-nginx:latest $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          
+          # 3. AWS ECR로 이미지 푸시
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          
           # 다음 스텝에서 사용할 전체 이미지 URI를 출력합니다.
           echo "image_uri=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-      # ==========================================================
-      # 5. ⭐ 핵심 단계: Task Definition 업데이트 및 ECS 서비스 배포 ⭐
-      # Task Definition을 새 이미지 URI로 업데이트하여 안정적으로 배포합니다.
-      # ==========================================================
-      - name: Deploy to ECS Fargate
-        id: deploy-task
-        env:
-          IMAGE_URI: ${{ steps.build-image.outputs.image_uri }} 
-        run: |
-          # 1. 현재 Task Definition (TD) JSON을 다운로드 받습니다.
-          # Task Definition 이름만 사용하여 최신 리비전을 가져옵니다.
-          aws ecs describe-task-definition \
-            --task-definition ${{ env.ECS_TASK_DEFINITION_NAME }} \
-            --query 'taskDefinition' \
-            --region ${{ env.AWS_REGION }} \
-            > task-definition.json
-
-          # 2. jq를 사용하여 다운로드 받은 JSON 파일에서 새 이미지 URI로 교체하고 불필요한 필드를 제거합니다.
-          cat task-definition.json \
-          | jq --arg IMG_URI "$IMAGE_URI" \
-               --arg CONTAINER_NAME "${{ env.CONTAINER_NAME }}" \
-               '(.containerDefinitions[] | select(.name == $CONTAINER_NAME).image) = $IMG_URI' \
-          | jq 'del(.status, .requiresAttributes, .revision, .compatibilities, .registeredAt, .registeredBy, .deregisteredAt, .runtimePlatform, .taskDefinitionArn, .requiresAttributes)' \
-          > new-task-definition.json
-          
-          echo "::notice file=new-task-definition.json::새 Task Definition을 등록합니다. 이미지: $IMAGE_URI"
-
-          # 3. 새로운 Task Definition을 AWS에 등록합니다.
-          NEW_TASK_DEF_ARN=$(aws ecs register-task-definition \
-            --cli-input-json file://new-task-definition.json \
-            --query 'taskDefinition.taskDefinitionArn' \
-            --region ${{ env.AWS_REGION }} \
-            --output text)
-
-          # 4. ECS 서비스에 새로운 Task Definition으로 업데이트 명령을 내립니다.
-          aws ecs update-service \
-            --cluster ${{ env.ECS_CLUSTER }} \
-            --service ${{ env.ECS_SERVICE }} \
-            --task-definition $NEW_TASK_DEF_ARN \
-            --force-new-deployment \
-            --region ${{ env.AWS_REGION }}
-
-      # ▼▼▼▼▼▼▼ [마무리] 디스코드 알림 ▼▼▼▼▼▼▼
-      - name: Discord Notification
-        uses: sarisia/actions-status-discord@v1
-        if: always()
-        with:
-          webhook: ${{ secrets.DISCORD_WEBHOOK }}
-          title: "프론트엔드 배포 결과 - ${{ github.ref_name }}"
-          description: |
-            **상태:** ${{ job.status }}
-            **실행자:** ${{ github.actor }}
-            **커밋:** ${{ github.event.head_commit.message }}
-            **Task Def ARN:** ${{ steps.deploy-task.outputs.NEW_TASK_DEF_ARN }} 
-          color: ${{ job.status == 'success' && '0x28a745' || '0xdc3545' }}
-          username: GitHub Actions Bot
+      # ▼▼▼▼▼ [ECS 배포 로직 제거됨] ▼▼▼▼▼
+      - name: ECR Push Completed
+        run: echo "Image push to ECR completed successfully. Deployment to ECS was skipped as requested."
