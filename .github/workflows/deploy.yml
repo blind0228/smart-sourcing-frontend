@@ -12,8 +12,8 @@ env:
   ECS_CLUSTER: SmartSourcing-Cluster
   CONTAINER_NAME: smartsourcing-frontend # Task Definition 내부의 컨테이너 이름
   
-  # ⭐ 중요: 현재 사용 중인 Task Definition의 기본 이름을 입력하세요 (예: my-frontend-task-def)
-  ECS_TASK_DEFINITION_NAME: SmartSourcing-Frontend-Task-Def-service # Task Def의 이름 부분만 입력
+  # ⭐ 수정 완료: Task Definition의 정확한 이름(리비전 번호 제거)을 입력해야 합니다.
+  ECS_TASK_DEFINITION_NAME: SmartSourcing-Frontend-Task-Def # 'service' 접미사 제거
 
 jobs:
   deploy:
@@ -47,6 +47,10 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
+      # ⭐ 디버깅을 위해 현재 인증 상태를 확인합니다. (권한 문제 확인용)
+      - name: Check AWS Caller Identity
+        run: aws sts get-caller-identity
+
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
@@ -72,6 +76,7 @@ jobs:
           IMAGE_URI: ${{ steps.build-image.outputs.image_uri }} 
         run: |
           # 1. 현재 Task Definition (TD) JSON을 다운로드 받습니다.
+          # Task Definition 이름만 사용하여 최신 리비전을 가져옵니다.
           aws ecs describe-task-definition \
             --task-definition ${{ env.ECS_TASK_DEFINITION_NAME }} \
             --query 'taskDefinition' \
