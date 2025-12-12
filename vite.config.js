@@ -8,7 +8,7 @@ export default defineConfig({
     port: 3006,
     proxy: {
       '/api': { 
-        target: 'http://smartsourcing-alb-new-409803492.us-east-1.elb.amazonaws.com',
+        target: 'http://SmartSourcing-ALB-407665338.us-east-1.elb.amazonaws.com',
         changeOrigin: true,
         secure: false, 
         // 🔥 이 rewrite 코드가 반드시 필요합니다.
